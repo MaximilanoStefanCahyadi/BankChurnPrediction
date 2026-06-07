@@ -19,7 +19,10 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-#MainMenu, footer, header { visibility: hidden; }
+
+#MainMenu, footer { visibility: hidden; }
+header { background-color: transparent !important; }
+
 .block-container { padding: 0 2rem 2rem 2rem !important; }
 
 section[data-testid="stSidebar"] {
@@ -43,8 +46,8 @@ section[data-testid="stSidebar"] .stSelectbox>div>div {
 .metric-sub   { font-size:12px; color:#64748b; margin-top:.3rem; }
 
 .section-header {
-  font-size:13px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
-  color:#64748b; border-bottom:1px solid #e2e8f0; padding-bottom:.5rem; margin-bottom:1rem;
+  font-size:16px; font-weight:600; letter-spacing:.02em;
+  color:#0f172a; border-bottom:2px solid #e2e8f0; padding-bottom:.4rem; margin-bottom:1rem; margin-top:1.5rem;
 }
 
 .pred-card {
@@ -62,19 +65,19 @@ section[data-testid="stSidebar"] .stSelectbox>div>div {
 
 .conf-track { background:#f1f5f9; border-radius:99px; height:10px;
   overflow:hidden; margin:.5rem 0; }
-.conf-fill  { height:100%; border-radius:99px; }
+.conf-fill  { height:100%; border-radius:99px; transition: width 0.4s ease-in-out; }
 
 .split-bar  { display:flex; border-radius:99px; overflow:hidden;
   height:28px; margin:.75rem 0; border:1px solid #e2e8f0; }
 .split-stay  { background:#22c55e; display:flex; align-items:center;
-  justify-content:center; font-size:12px; font-weight:600; color:white; }
+  justify-content:center; font-size:12px; font-weight:600; color:white; transition: width 0.4s; }
 .split-churn { background:#ef4444; display:flex; align-items:center;
-  justify-content:center; font-size:12px; font-weight:600; color:white; }
+  justify-content:center; font-size:12px; font-weight:600; color:white; transition: width 0.4s; }
 
 .factor-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 .factor-name { font-size:12px; color:#475569; width:130px; flex-shrink:0; }
 .factor-bar-wrap { flex:1; background:#f1f5f9; border-radius:4px; height:8px; }
-.factor-bar { height:8px; border-radius:4px; background:#3b82f6; }
+.factor-bar { height:8px; border-radius:4px; background:#3b82f6; transition: width 0.4s; }
 .factor-pct { font-size:11px; color:#94a3b8; width:36px; text-align:right; }
 
 .stTabs [data-baseweb="tab-list"] {
@@ -94,23 +97,35 @@ section[data-testid="stSidebar"] .stSelectbox>div>div {
 """, unsafe_allow_html=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-FEATURES = ['credit_score','age','tenure','balance','products_number',
-            'credit_card','active_member','estimated_salary',
-            'country_Germany','country_Spain','gender_Male']
+FEATURES = [
+    'credit_score', 'age', 'tenure', 'balance', 'products_number', 
+    'credit_card', 'active_member', 'estimated_salary', 
+    'country_Germany', 'country_Spain', 'gender_Male'
+]
+
 FEATURE_LABELS = ['Credit score','Age','Tenure','Balance','Products',
                   'Credit card','Active member','Est. salary',
                   'Country: Germany','Country: Spain','Gender: Male']
-COLOR_SEQ = ['#3b82f6','#22c55e','#ef4444','#f59e0b','#8b5cf6','#ec4899']
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
 @st.cache_resource
-def load_model():
-    base = os.path.dirname(os.path.abspath(__file__))
-    for p in [os.path.join(base, 'model.pkl'), 'model.pkl']:
-        if os.path.exists(p):
-            with open(p, 'rb') as f:
-                return pickle.load(f)
-    raise FileNotFoundError("model.pkl not found — place it next to app.py")
+def load_models():
+    """Loads both the Baseline and SMOTE models into a dictionary."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    models = {}
+    
+    model_files = {
+        "SMOTE Optimized": "smote.pkl",
+        "Base Model": "base.pkl"
+    }
+    
+    for m_name, f_name in model_files.items():
+        for p in [os.path.join(base_dir, f_name), f_name]:
+            if os.path.exists(p):
+                with open(p, 'rb') as f:
+                    models[m_name] = pickle.load(f)
+                break
+    return models
 
 @st.cache_resource
 def load_scaler():
@@ -120,8 +135,6 @@ def load_scaler():
             with open(p, 'rb') as f:
                 return pickle.load(f)
     raise FileNotFoundError("scaler.pkl not found — place it next to app.py")
-
-scaler = load_scaler()
 
 @st.cache_data
 def load_data():
@@ -135,7 +148,7 @@ def load_data():
     raise FileNotFoundError("churn.csv not found")
 
 @st.cache_data
-def prepare_test_set(_model, _scaler): # Pass the scaler in here
+def prepare_test_set(_scaler):
     df = load_data()
     df_enc = pd.get_dummies(df, columns=['country','gender'], drop_first=True)
     
@@ -146,42 +159,34 @@ def prepare_test_set(_model, _scaler): # Pass the scaler in here
     X = df_enc[FEATURES].astype(float)
     y = df_enc['churn']
     
-    # Split the data
     _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    # --- ADD THIS: Scale the test set before predicting! ---
     X_test_scaled = X_test.copy()
-    cols_to_scale = ['credit_score', 'age', 'balance', 'estimated_salary'] # Use your exact names
+    cols_to_scale = ['credit_score', 'age', 'balance', 'estimated_salary']
     X_test_scaled[cols_to_scale] = _scaler.transform(X_test[cols_to_scale])
-    # -------------------------------------------------------
-
-    # Predict using the SCALED data
-    proba = _model.predict_proba(X_test_scaled)[:,1]
-    preds = (_model.predict(X_test_scaled)).astype(int)
     
-    return X_test, y_test, proba, preds
+    return X_test_scaled, y_test
 
-# And update the loader line below it:
-
-
-model = load_model()
+# Load everything globally
+models_dict = load_models()
+scaler = load_scaler()
 df = load_data()
-X_test, y_test, proba_test, preds_test = prepare_test_set(model, scaler)
+X_test_scaled, y_test = prepare_test_set(scaler)
 
 def build_input_df(credit_score, age, tenure, balance, products,
                    credit_card, active, country, gender):
     row = {
-        'credit_score'    : float(credit_score),
-        'age'             : float(age),
-        'tenure'          : float(tenure),
-        'balance'         : float(balance),
-        'products_number' : float(products),
-        'credit_card'     : float(credit_card),
-        'active_member'   : float(active),
-        'estimated_salary': float(0),
-        'country_Germany' : float(country == 'Germany'),
-        'country_Spain'   : float(country == 'Spain'),
-        'gender_Male'     : float(gender == 'Male'),
+        'credit_score'     : float(credit_score),
+        'age'              : float(age),
+        'tenure'           : float(tenure),
+        'balance'          : float(balance),
+        'products_number'  : float(products),
+        'credit_card'      : float(credit_card),
+        'active_member'    : float(active),
+        'estimated_salary' : float(0),
+        'country_Germany'  : float(country == 'Germany'),
+        'country_Spain'    : float(country == 'Spain'),
+        'gender_Male'      : float(gender == 'Male'),
     }
     return pd.DataFrame([row])[FEATURES]
 
@@ -190,14 +195,20 @@ with st.sidebar:
     st.markdown("""
     <div style="padding:1.25rem 0 1rem">
       <div style="font-size:20px;font-weight:700;color:#f8fafc">🏦 Churn Intelligence</div>
-      <div style="font-size:12px;color:#64748b;margin-top:4px">Gradient Boosting · AUC 0.859</div>
-    </div>
-    <hr style="border-color:#334155;margin-bottom:1rem">
-    <div style="font-size:11px;font-weight:600;letter-spacing:.08em;
-         text-transform:uppercase;color:#64748b;margin-bottom:.75rem">
-      Customer Profile
+      <div style="font-size:12px;color:#64748b;margin-top:4px">Gradient Boosting Dashboard</div>
     </div>
     """, unsafe_allow_html=True)
+    
+    st.markdown('<div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;margin-bottom:.5rem;">⚙️ Model Selection</div>', unsafe_allow_html=True)
+    selected_model_name = st.selectbox("Active Prediction Engine:", list(models_dict.keys()))
+    
+    active_model = models_dict[selected_model_name]
+
+    st.markdown("<hr style='border-color:#334155;margin:1rem 0 .75rem 0'>", unsafe_allow_html=True)
+    st.markdown("""<div style="font-size:11px;font-weight:600;letter-spacing:.08em;
+         text-transform:uppercase;color:#64748b;margin-bottom:.75rem">
+      Customer Profile
+    </div>""", unsafe_allow_html=True)
 
     country  = st.selectbox("Country",  ['France', 'Germany', 'Spain'])
     gender   = st.selectbox("Gender",   ['Female', 'Male'])
@@ -219,22 +230,15 @@ with st.sidebar:
     cc_val = 1 if credit_card == "Yes" else 0
     am_val = 1 if active      == "Yes" else 0
 
-    # 1. Build your full 11-column dataframe
     input_df = build_input_df(credit_score, age, tenure, balance,
                               products, cc_val, am_val, country, gender)
     input_df['estimated_salary'] = float(salary)
 
-    # 2. Define the exact columns the scaler expects
     cols_to_scale = ['credit_score', 'age', 'balance', 'estimated_salary']
-
-    # 3. Create a copy of the dataframe so we don't mess up the original
     input_scaled = input_df.copy()
-
-    # 4. Scale ONLY those four specific columns!
     input_scaled[cols_to_scale] = scaler.transform(input_df[cols_to_scale])
 
-    # 5. Predict using the scaled dataframe
-    churn_prob = float(model.predict_proba(input_scaled)[0][1])
+    churn_prob = float(active_model.predict_proba(input_scaled)[0][1])
     stay_prob  = 1 - churn_prob
     confidence = abs(churn_prob - 0.5) * 2
 
@@ -250,13 +254,18 @@ with st.sidebar:
     conf_color = "#22c55e" if confidence >= 0.7 else \
                  "#f59e0b" if confidence >= 0.4 else "#ef4444"
 
+
+# Get test predictions for the currently active model (for Tab 1 metrics)
+proba_test_active = active_model.predict_proba(X_test_scaled)[:,1]
+
+
 # ── Page header ───────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="page-title">Bank Customer Churn Intelligence</div>
-<div class="page-sub">Predict churn risk and explore model insights across 10,000 customers.</div>
+<div class="page-sub">Predict churn risk and explore Exploratory Data Analysis (EDA) across 10,000 customers.</div>
 """, unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["🎯  Predictor", "📊  Analytics", "📋  Data Explorer"])
+tab1, tab2, tab3 = st.tabs(["🎯 Predictor", "📊 Exploratory Data Analysis (Notebook)", "📋 Data Explorer"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — Predictor
@@ -279,8 +288,7 @@ with tab1:
               <span>Low risk</span><span>High risk</span>
             </div>
             <div class="conf-track">
-              <div class="conf-fill"
-                   style="width:{churn_pct}%;background:{bar_color};"></div>
+              <div class="conf-fill" style="width:{churn_pct}%;background:{bar_color};"></div>
             </div>
           </div>
           <div class="split-bar" style="margin-top:1rem;">
@@ -300,8 +308,7 @@ with tab1:
             <span style="font-size:13px;color:#64748b;font-weight:500">{conf_label}</span>
           </div>
           <div class="conf-track" style="margin-top:.5rem;">
-            <div class="conf-fill"
-                 style="width:{round(confidence*100)}%;background:{conf_color};"></div>
+            <div class="conf-fill" style="width:{round(confidence*100)}%;background:{conf_color};"></div>
           </div>
           <div class="metric-sub">
             {"High confidence — prediction is reliable."       if conf_label=="High"   else
@@ -325,28 +332,7 @@ with tab1:
                   <div class="metric-value" style="color:{color};font-size:1.5rem">{val}</div>
                 </div>""", unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">Top Risk Factors</div>',
-                    unsafe_allow_html=True)
-
-        fi_pairs = sorted(zip(FEATURE_LABELS, model.feature_importances_),
-                          key=lambda x: -x[1])
-        fi_html = ""
-        for label, imp in fi_pairs[:7]:
-            bar_w = round(imp * 380)
-            fi_html += f"""
-            <div class="factor-row">
-              <div class="factor-name">{label}</div>
-              <div class="factor-bar-wrap">
-                <div class="factor-bar" style="width:{bar_w}px;"></div>
-              </div>
-              <div class="factor-pct">{round(imp*100,1)}%</div>
-            </div>"""
-        st.markdown(fi_html, unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">Customer Summary</div>',
-                    unsafe_allow_html=True)
+        st.markdown('<div class="section-header" style="font-size:13px;margin-top:1rem;margin-bottom:1rem;">Customer Summary</div>', unsafe_allow_html=True)
         fields = [
             ("Country", country), ("Gender", gender),
             ("Age", age),         ("Credit score", credit_score),
@@ -365,140 +351,144 @@ with tab1:
                 </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — Analytics
+# TAB 2 — Analytics (Notebook EDA Replication)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
-    auc        = roc_auc_score(y_test, proba_test)
-    ap         = average_precision_score(y_test, proba_test)
-    acc        = (preds_test == y_test.values).mean()
-    churn_rate = df['churn'].mean()
-    conf_scores = np.abs(proba_test - 0.5) * 2
-
-    k1, k2, k3, k4 = st.columns(4)
-    for col, label, value, sub in [
-        (k1, "Test AUC",       f"{auc:.4f}",    "ROC area under curve"),
-        (k2, "Avg Precision",  f"{ap:.4f}",     "Precision-recall AUC"),
-        (k3, "Accuracy",       f"{acc:.1%}",    "At threshold 0.5"),
-        (k4, "Churn Rate",     f"{churn_rate:.1%}", "Dataset base rate"),
-    ]:
-        with col:
-            st.markdown(f"""
-            <div class="metric-card">
-              <div class="metric-label">{label}</div>
-              <div class="metric-value">{value}</div>
-              <div class="metric-sub">{sub}</div>
-            </div>""", unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    def make_fig(figsize=(5.5, 4)):
-        fig, ax = plt.subplots(figsize=figsize)
-        ax.set_facecolor('#f8fafc'); fig.patch.set_facecolor('white')
-        ax.spines[['top','right']].set_visible(False)
-        return fig, ax
-
-    c1, c2 = st.columns(2, gap="large")
-    with c1:
-        st.markdown('<div class="section-header">ROC Curve</div>', unsafe_allow_html=True)
-        fpr, tpr, _ = roc_curve(y_test, proba_test)
-        fig, ax = make_fig()
-        ax.plot(fpr, tpr, color='#3b82f6', lw=2, label=f'AUC = {auc:.3f}')
-        ax.fill_between(fpr, tpr, alpha=0.08, color='#3b82f6')
-        ax.plot([0,1],[0,1],'--',color='#cbd5e1',lw=1)
-        ax.set_xlabel('False positive rate', fontsize=11)
-        ax.set_ylabel('True positive rate',  fontsize=11)
-        ax.legend(fontsize=10)
-        st.pyplot(fig, width='stretch'); plt.close()
-
-    with c2:
-        st.markdown('<div class="section-header">Precision-Recall Curve</div>', unsafe_allow_html=True)
-        prec, rec, _ = precision_recall_curve(y_test, proba_test)
-        fig, ax = make_fig()
-        ax.plot(rec, prec, color='#8b5cf6', lw=2, label=f'AP = {ap:.3f}')
-        ax.fill_between(rec, prec, alpha=0.08, color='#8b5cf6')
-        ax.axhline(churn_rate, color='#cbd5e1', ls='--', lw=1, label=f'Baseline ({churn_rate:.2f})')
-        ax.set_xlabel('Recall',    fontsize=11)
-        ax.set_ylabel('Precision', fontsize=11)
-        ax.legend(fontsize=10)
-        st.pyplot(fig, width='stretch'); plt.close()
-
-    c3, c4 = st.columns(2, gap="large")
-    with c3:
-        st.markdown('<div class="section-header">Confusion Matrix</div>', unsafe_allow_html=True)
-        cm = confusion_matrix(y_test, preds_test)
-        fig, ax = make_fig((4.5, 3.8))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                    xticklabels=['Stay','Churn'], yticklabels=['Stay','Churn'],
-                    linewidths=.5, annot_kws={'size':13})
-        ax.set_xlabel('Predicted', fontsize=11); ax.set_ylabel('Actual', fontsize=11)
-        fig.patch.set_facecolor('white')
-        st.pyplot(fig, width='stretch'); plt.close()
-
-    with c4:
-        st.markdown('<div class="section-header">Feature Importance</div>', unsafe_allow_html=True)
-        fi = pd.Series(model.feature_importances_, index=FEATURE_LABELS).sort_values()
-        fig, ax = make_fig((5, 4.2))
-        colors = ['#ef4444' if v >= fi.nlargest(2).min() else '#3b82f6' for v in fi.values]
-        ax.barh(fi.index, fi.values * 100, color=colors, height=0.65)
-        ax.set_xlabel('Importance (%)', fontsize=11)
-        for i, v in enumerate(fi.values):
-            ax.text(v*100+.3, i, f'{v*100:.1f}%', va='center', fontsize=9, color='#475569')
-        st.pyplot(fig, width='stretch'); plt.close()
-
-    c5, c6 = st.columns(2, gap="large")
-    with c5:
-        st.markdown('<div class="section-header">Confidence Score Distribution</div>', unsafe_allow_html=True)
-        fig, ax = make_fig()
-        ax.hist(proba_test[y_test == 0], bins=35, alpha=0.6, color='#22c55e', label='Actual: Stay', density=True)
-        ax.hist(proba_test[y_test == 1], bins=35, alpha=0.6, color='#ef4444', label='Actual: Churn', density=True)
-        ax.axvline(0.5, color='#0f172a', ls='--', lw=1.5, label='Threshold 0.5')
-        ax.set_xlabel('Predicted churn probability', fontsize=11)
-        ax.set_ylabel('Density', fontsize=11); ax.legend(fontsize=10)
-        st.pyplot(fig, width='stretch'); plt.close()
-
-    with c6:
-        st.markdown('<div class="section-header">Churn Rate by Country & Gender</div>', unsafe_allow_html=True)
-        fig, axes = plt.subplots(1, 2, figsize=(5.5, 3.8))
-        ct = df.groupby('country')['churn'].mean().sort_values(ascending=False)
-        axes[0].bar(ct.index, ct.values*100, color=COLOR_SEQ[:3], width=0.5)
-        axes[0].set_ylabel('Churn rate (%)', fontsize=10)
-        axes[0].set_title('By country', fontsize=11, fontweight='500')
-        for i, v in enumerate(ct.values):
-            axes[0].text(i, v*100+.3, f'{v*100:.1f}%', ha='center', fontsize=9)
-        cg = df.groupby('gender')['churn'].mean()
-        axes[1].bar(cg.index, cg.values*100, color=['#ec4899','#3b82f6'], width=0.4)
-        axes[1].set_ylabel('Churn rate (%)', fontsize=10)
-        axes[1].set_title('By gender', fontsize=11, fontweight='500')
-        for i, v in enumerate(cg.values):
-            axes[1].text(i, v*100+.3, f'{v*100:.1f}%', ha='center', fontsize=9)
-        for ax in axes:
-            ax.set_facecolor('#f8fafc')
-            ax.spines[['top','right']].set_visible(False)
-        fig.patch.set_facecolor('white')
+    
+    # --- ROW 1: Churn Dist & Products ---
+    r1c1, r1c2 = st.columns(2)
+    
+    with r1c1:
+        st.markdown('<div class="section-header" style="margin-top:0">1. Churn Distribution</div>', unsafe_allow_html=True)
+        fig1, ax1 = plt.subplots(figsize=(5, 3.5))
+        sns.countplot(data=df, x='churn', palette='Set2', ax=ax1)
+        ax1.set_xlabel('Churn (0 = Stay, 1 = Leave)', fontsize=10)
+        ax1.set_ylabel('Count', fontsize=10)
         plt.tight_layout()
-        st.pyplot(fig, width='stretch'); plt.close()
+        st.pyplot(fig1)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-header">Accuracy vs Confidence Tier</div>', unsafe_allow_html=True)
-    t1, t2, t3 = st.columns(3)
-    for col, label, lo, hi, color in [
-        (t1, "High Confidence",   0.7, 1.01, "#22c55e"),
-        (t2, "Medium Confidence", 0.4, 0.70, "#f59e0b"),
-        (t3, "Low Confidence",    0.0, 0.40, "#ef4444"),
-    ]:
-        mask  = (conf_scores >= lo) & (conf_scores < hi)
-        n     = int(mask.sum())
-        acc_t = (preds_test[mask] == y_test.values[mask]).mean() if n > 0 else 0
-        with col:
-            st.markdown(f"""
-            <div class="metric-card" style="border-top:3px solid {color};">
-              <div class="metric-label">{label}</div>
-              <div class="metric-value">{acc_t:.1%}</div>
-              <div class="metric-sub">{n:,} predictions</div>
-              <div class="conf-track" style="margin-top:.5rem;">
-                <div class="conf-fill" style="width:{acc_t*100:.0f}%;background:{color};"></div>
-              </div>
-            </div>""", unsafe_allow_html=True)
+    with r1c2:
+        st.markdown('<div class="section-header" style="margin-top:0">2. Churn Rate by Products</div>', unsafe_allow_html=True)
+        fig4, ax4 = plt.subplots(figsize=(5, 3.5))
+        product_churn = df.groupby('products_number')['churn'].mean().reset_index()
+        sns.barplot(data=product_churn, x='products_number', y='churn', palette='magma', ax=ax4)
+        for p in ax4.patches:
+            ax4.annotate(f'{p.get_height():.1%}', 
+                         (p.get_x() + p.get_width() / 2., p.get_height()), 
+                         ha='center', va='bottom', fontsize=9, color='black', xytext=(0, 4), textcoords='offset points')
+        ax4.set_xlabel('Number of Products', fontsize=10)
+        ax4.set_ylabel('Churn Rate', fontsize=10)
+        plt.tight_layout()
+        st.pyplot(fig4)
+
+    # --- ROW 2: Demographics & Numerical Distributions ---
+    r2c1, r2c2 = st.columns(2)
+    
+    with r2c1:
+        st.markdown('<div class="section-header">3. Churn by Demographics</div>', unsafe_allow_html=True)
+        fig3, axes3 = plt.subplots(1, 2, figsize=(7, 4.5))
+        sns.countplot(data=df, x='country', hue='churn', palette='Set1', ax=axes3[0])
+        axes3[0].set_title('By Country', fontsize=11)
+        axes3[0].set_xlabel('')
+        
+        sns.countplot(data=df, x='gender', hue='churn', palette='Set1', ax=axes3[1])
+        axes3[1].set_title('By Gender', fontsize=11)
+        axes3[1].set_xlabel('')
+        plt.tight_layout()
+        st.pyplot(fig3)
+
+    with r2c2:
+        st.markdown('<div class="section-header">4. Numerical Feature Distributions</div>', unsafe_allow_html=True)
+        num_cols = ['credit_score', 'age', 'balance', 'estimated_salary']
+        fig2, axes2 = plt.subplots(2, 2, figsize=(7, 4.5))
+        for i, col in enumerate(num_cols):
+            row_idx, col_idx = i // 2, i % 2
+            sns.histplot(data=df, x=col, kde=True, ax=axes2[row_idx, col_idx], color='#3b82f6', bins=20)
+            axes2[row_idx, col_idx].set_ylabel('')
+            axes2[row_idx, col_idx].set_xlabel(col.replace('_', ' ').title(), fontsize=9)
+        plt.tight_layout()
+        st.pyplot(fig2)
+
+    # --- ROW 3: Correlation Heatmap & Feature Importance ---
+    r3c1, r3c2 = st.columns(2)
+    
+    with r3c1:
+        st.markdown('<div class="section-header">5. Correlation Heatmap</div>', unsafe_allow_html=True)
+        fig5, ax5 = plt.subplots(figsize=(6, 5))
+        df_encoded = pd.get_dummies(df, columns=['country', 'gender'], drop_first=True)
+        sns.heatmap(df_encoded.corr(), annot=True, cmap='coolwarm', fmt='.2f', linewidths=0.5, ax=ax5, annot_kws={"size": 7})
+        ax5.tick_params(labelsize=8)
+        plt.tight_layout()
+        st.pyplot(fig5)
+
+    with r3c2:
+        st.markdown(f'<div class="section-header">6. Feature Importance ({selected_model_name})</div>', unsafe_allow_html=True)
+        fig8, ax8 = plt.subplots(figsize=(6, 5))
+        fi = pd.Series(active_model.feature_importances_, index=FEATURE_LABELS).sort_values(ascending=False)
+        sns.barplot(x=fi.values, y=fi.index, palette='magma', ax=ax8)
+        ax8.set_xlabel('Importance Score', fontsize=10)
+        ax8.set_ylabel('')
+        ax8.tick_params(labelsize=10)
+        plt.tight_layout()
+        st.pyplot(fig8)
+
+    # --- ROW 4: ROC and PR Comparison ---
+    st.markdown('<div class="section-header">7. Model Performance Comparison</div>', unsafe_allow_html=True)
+    fig6, axes6 = plt.subplots(1, 2, figsize=(12, 4.5))
+    line_colors = {'SMOTE Optimized': 'darkorange', 'Base Model': '#3b82f6'}
+    
+    for m_name, m_obj in models_dict.items():
+        m_proba = m_obj.predict_proba(X_test_scaled)[:,1]
+        m_auc = roc_auc_score(y_test, m_proba)
+        m_ap  = average_precision_score(y_test, m_proba)
+        fpr, tpr, _ = roc_curve(y_test, m_proba)
+        prec, rec, _ = precision_recall_curve(y_test, m_proba)
+        
+        lw = 2.5 if m_name == selected_model_name else 1.5
+        alpha = 1.0 if m_name == selected_model_name else 0.5
+        color = line_colors.get(m_name, 'purple')
+        
+        axes6[0].plot(fpr, tpr, color=color, lw=lw, alpha=alpha, label=f'{m_name} (AUC = {m_auc:.3f})')
+        axes6[1].plot(rec, prec, color=color, lw=lw, alpha=alpha, label=f'{m_name} (AP = {m_ap:.3f})')
+        
+    axes6[0].plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    axes6[0].set_xlabel('False Positive Rate', fontsize=10)
+    axes6[0].set_ylabel('True Positive Rate', fontsize=10)
+    axes6[0].set_title('ROC Curve Comparison', fontsize=11)
+    axes6[0].legend(loc="lower right", fontsize=9)
+
+    axes6[1].set_xlabel('Recall', fontsize=10)
+    axes6[1].set_ylabel('Precision', fontsize=10)
+    axes6[1].set_title('Precision-Recall Curve Comparison', fontsize=11)
+    axes6[1].legend(loc="lower left", fontsize=9)
+    
+    plt.tight_layout()
+    st.pyplot(fig6)
+
+    # --- ROW 5: Confusion Matrix Comparison ---
+    st.markdown('<div class="section-header">8. Confusion Matrix Comparison</div>', unsafe_allow_html=True)
+    fig7, axes7 = plt.subplots(1, 2, figsize=(12, 4.5))
+
+    for i, (m_name, m_obj) in enumerate(models_dict.items()):
+        # Get raw 0/1 predictions for the confusion matrix
+        m_preds = m_obj.predict(X_test_scaled)
+        cm = confusion_matrix(y_test, m_preds)
+
+        # Style the active model to stand out
+        is_active = (m_name == selected_model_name)
+        cmap = 'Oranges' if m_name == 'SMOTE Optimized' else 'Blues'
+        title_weight = 'bold' if is_active else 'normal'
+
+        sns.heatmap(cm, annot=True, fmt='d', cmap=cmap, ax=axes7[i],
+                    xticklabels=['Predicted Stay', 'Predicted Churn'], 
+                    yticklabels=['Actual Stay', 'Actual Churn'],
+                    linewidths=1, linecolor='white')
+        
+        axes7[i].set_title(f'{m_name}', fontweight=title_weight, fontsize=12, pad=10)
+
+    plt.tight_layout()
+    st.pyplot(fig7)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — Data Explorer
@@ -532,7 +522,7 @@ with tab3:
     st.dataframe(disp, width='stretch', height=420)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-header">Summary Statistics (filtered)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header" style="margin-top:0">Summary Statistics (filtered)</div>', unsafe_allow_html=True)
     desc = dff[['credit_score','age','tenure','balance','estimated_salary']].describe().round(1).T[['mean','std','min','50%','max']]
     desc.columns = ['Mean','Std','Min','Median','Max']
     st.dataframe(desc, width='stretch')
